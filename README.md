@@ -61,7 +61,7 @@ python examples/example_pytorch.py
 python examples/example_jax.py
 ```
 
-Both examples train identical transformer models on the tiny_shakespeare dataset and generate comparison plots.
+Both examples train two identical transformer models (one with MuonClip, one with AdamW) on the tiny_shakespeare dataset.
 
 ## Tests
 
