@@ -1,21 +1,3 @@
-"""
-MuonClip Optimizer - JAX/Optax Implementation
-=============================================
-
-A token-efficient optimizer that combines Muon with QK-Clip for stable LLM training.
-Based on Algorithm 1 from the Kimi K2 Technical Report.
-
-Features:
-- Newton-Schulz orthogonalization for 2D+ parameters
-- QK-Clip mechanism to prevent attention logit explosion
-- Standard momentum for 1D parameters
-- RMS matching for proper scaling
-- Full Optax integration
-
-Author: Based on Kimi K2 Technical Report
-License: Educational/Research Use
-"""
-
 import jax
 import jax.numpy as jnp
 from jax import random, grad, jit, tree_util, lax
