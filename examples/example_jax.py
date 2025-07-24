@@ -159,10 +159,8 @@ class GPTModel(nn.Module):
         return logits, attention_logits
 
 
-def create_train_state_muon(rng, model, learning_rate=2e-4):
-    dummy_input = jnp.ones((1, 32), dtype=jnp.int32)
-    variables = model.init(rng, dummy_input, deterministic=True)
-    
+def create_optimizer_muon(params, learning_rate=2e-4):
+    """Create MuonClip optimizer (returns TrainState for JAX)"""
     tx = muonclip(
         learning_rate=learning_rate,
         momentum=0.95,
@@ -170,41 +168,39 @@ def create_train_state_muon(rng, model, learning_rate=2e-4):
     )
     
     return TrainState.create(
-        apply_fn=model.apply,
-        params=variables['params'],
+        apply_fn=None,  # Will be set later with model
+        params=params,
         tx=tx,
         attention_logits={}
     )
 
 
-def create_train_state_adamw(rng, model, learning_rate=3e-4):
-    dummy_input = jnp.ones((1, 32), dtype=jnp.int32)
-    variables = model.init(rng, dummy_input, deterministic=True)
-    
+def create_optimizer_adamw(params, learning_rate=3e-4):
+    """Create AdamW optimizer (returns TrainState for JAX)"""
     tx = optax.adamw(learning_rate=learning_rate, weight_decay=0.1)
     
     return train_state.TrainState.create(
-        apply_fn=model.apply,
-        params=variables['params'],
+        apply_fn=None,  # Will be set later with model
+        params=params,
         tx=tx
     )
 
 
-@partial(jit, static_argnames=['tau'])
-def train_step_muon(state: TrainState, batch: Dict[str, jnp.ndarray], 
+@partial(jit, static_argnames=['model', 'tau'])
+def train_step_muon(model, state: TrainState, inputs: jnp.ndarray, targets: jnp.ndarray,
                     rng: jax.random.PRNGKey, tau: float = 100.0):
-    """Training step with MuonClip and QK-Clip"""
+    """Training step with MuonClip optimizer"""
     
     def loss_fn(params):
-        logits, attention_logits = state.apply_fn(
+        logits, attention_logits = model.apply(
             {'params': params},
-            batch['inputs'],
+            inputs,
             deterministic=False,
             rngs={'dropout': rng}
         )
         loss = optax.softmax_cross_entropy_with_integer_labels(
             logits.reshape(-1, logits.shape[-1]),
-            batch['targets'].reshape(-1)
+            targets.reshape(-1)
         ).mean()
         return loss, attention_logits
     
@@ -253,21 +249,21 @@ def train_step_muon(state: TrainState, batch: Dict[str, jnp.ndarray],
     return state, loss, grad_norm, attention_logits
 
 
-@jit
-def train_step_adamw(state: train_state.TrainState, batch: Dict[str, jnp.ndarray], 
+@partial(jit, static_argnames=['model'])
+def train_step_adamw(model, state: train_state.TrainState, inputs: jnp.ndarray, targets: jnp.ndarray,
                      rng: jax.random.PRNGKey):
     """Training step with standard AdamW optimizer"""
     
     def loss_fn(params):
-        logits, _ = state.apply_fn(
+        logits, _ = model.apply(
             {'params': params},
-            batch['inputs'],
+            inputs,
             deterministic=False,
             rngs={'dropout': rng}
         )
         loss = optax.softmax_cross_entropy_with_integer_labels(
             logits.reshape(-1, logits.shape[-1]),
-            batch['targets'].reshape(-1)
+            targets.reshape(-1)
         ).mean()
         return loss
     
@@ -349,7 +345,15 @@ def train_and_compare():
     print(f"Using GPT-2 tokenizer with BPE encoding")
     
     print("Initializing models...")
-    model = GPTModel(
+    # Create two identical models
+    model_muon = GPTModel(
+        vocab_size=vocab_size,
+        d_model=d_model,
+        num_heads=num_heads,
+        num_layers=num_layers,
+        max_seq_len=max_seq_len
+    )
+    model_adamw = GPTModel(
         vocab_size=vocab_size,
         d_model=d_model,
         num_heads=num_heads,
@@ -357,13 +361,17 @@ def train_and_compare():
         max_seq_len=max_seq_len
     )
     
-    # Create train states
-    print("Creating optimizers...")
-    state_muon = create_train_state_muon(model_key, model)
-    state_adamw = create_train_state_adamw(model_key, model)
+    # Initialize both models with same parameters
+    dummy_input = jnp.ones((1, 32), dtype=jnp.int32)
+    key_muon, key_adamw = random.split(model_key)
+    variables_muon = model_muon.init(key_muon, dummy_input, deterministic=True)
+    # Use same params for both models to ensure identical initialization
+    variables_adamw = {'params': variables_muon['params'].copy()}
     
-    # Copy params to ensure identical initialization
-    state_adamw = state_adamw.replace(params=state_muon.params)
+    # Create optimizers
+    print("Creating optimizers...")
+    state_muon = create_optimizer_muon(variables_muon['params'], learning_rate=2e-4)
+    state_adamw = create_optimizer_adamw(variables_adamw['params'], learning_rate=3e-4)
     
     
     # Training metrics
@@ -387,14 +395,14 @@ def train_and_compare():
         for batch_idx, batch in pbar:
             key, rng_muon, rng_adam = random.split(key, 3)
             
-            # Train MuonClip
+            # Train MuonClip model
             state_muon, loss_muon, grad_norm_muon, attention_logits = train_step_muon(
-                state_muon, batch, rng_muon
+                model_muon, state_muon, batch['inputs'], batch['targets'], rng_muon
             )
             
-            # Train AdamW
+            # Train AdamW model
             state_adamw, loss_adamw, grad_norm_adamw = train_step_adamw(
-                state_adamw, batch, rng_adam
+                model_adamw, state_adamw, batch['inputs'], batch['targets'], rng_adam
             )
             
             # Record metrics
@@ -432,7 +440,7 @@ def train_and_compare():
     plot_training_metrics(muon_losses, adamw_losses, muon_max_logits,
                          muon_grad_norms, adamw_grad_norms)
     
-    return state_muon, state_adamw
+    return model_muon, model_adamw
 
 
 def plot_training_metrics(muon_losses, adamw_losses, max_logits, muon_grads, adamw_grads):

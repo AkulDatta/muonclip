@@ -272,14 +272,14 @@ def load_shakespeare_data(batch_size: int, seq_len: int, num_batches: int = 100)
     return data, vocab_size, enc, decode
 
 
-def train_step_muon(model, inputs, targets, optimizer, criterion):
+def train_step_muon(model, inputs, targets, optimizer):
     """Training step with MuonClip optimizer"""
     model.train()
     optimizer.zero_grad()
     
     # Forward pass
     logits, attention_logits = model(inputs)
-    loss = criterion(logits.view(-1, logits.shape[-1]), targets.view(-1))
+    loss = F.cross_entropy(logits.view(-1, logits.shape[-1]), targets.view(-1))
     
     # Backward pass
     loss.backward()
@@ -306,14 +306,14 @@ def train_step_muon(model, inputs, targets, optimizer, criterion):
     return loss.item(), grad_norm, max_logit, attention_logits
 
 
-def train_step_adamw(model, inputs, targets, optimizer, criterion):
+def train_step_adamw(model, inputs, targets, optimizer):
     """Training step with standard AdamW optimizer"""
     model.train()
     optimizer.zero_grad()
     
     # Forward pass
     logits, _ = model(inputs)
-    loss = criterion(logits.view(-1, logits.shape[-1]), targets.view(-1))
+    loss = F.cross_entropy(logits.view(-1, logits.shape[-1]), targets.view(-1))
     
     # Backward pass
     loss.backward()
@@ -375,9 +375,6 @@ def train_and_compare():
     # AdamW setup
     adamw_opt = create_optimizer_adamw(model_adamw, learning_rate=3e-4)
     
-    # Loss function
-    criterion = nn.CrossEntropyLoss()
-    
     # Training metrics
     muon_losses = []
     adamw_losses = []
@@ -401,12 +398,12 @@ def train_and_compare():
             
             # Train MuonClip model
             loss_muon, muon_grad_norm, max_logit, attention_logits_muon = train_step_muon(
-                model_muon, inputs, targets, muon_opt, criterion
+                model_muon, inputs, targets, muon_opt
             )
             
             # Train AdamW model
             loss_adamw, adamw_grad_norm = train_step_adamw(
-                model_adamw, inputs, targets, adamw_opt, criterion
+                model_adamw, inputs, targets, adamw_opt
             )
             
             # Record metrics
