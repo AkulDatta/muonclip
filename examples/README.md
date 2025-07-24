@@ -9,8 +9,7 @@ Transformer training examples with MuonClip.
 
 ## Features
 
-- Trains on tiny_shakespeare dataset
-- Compares MuonClip vs AdamW
+- Trains two identical models (one with MuonClip, one with AdamW) on the tiny_shakespeare dataset
 - Tracks attention logits for QK-Clip
 - Plots training metrics
 
